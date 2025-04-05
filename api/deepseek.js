@@ -1,36 +1,52 @@
 const axios = require('axios');
 
+// تخزين المحادثات لكل معرّف
+const conversations = {};
+
 const meta = {
   name: "deepseek",
   version: "0.0.1",
-  description: "An API endpoint that fetches chat completions from siliconflow based on a required query parameter",
+  description: "An API endpoint that fetches chat completions from siliconflow based on required id and query parameters",
   author: "Jr Busaco and AjiroDesu",
   method: "get",
   category: "ai",
-  path: "/deepseek?query="
+  path: "/deepseek?id=&query="
 };
 
 async function onStart({ res, req }) {
-  // Extract the required 'query' parameter from the query string
-  const { query } = req.query;
-  if (!query) {
-    return res.status(400).json({ status: false, error: 'query is required' });
+  // استخراج المعلمات المطلوبة
+  const { id, query } = req.query;
+  
+  // التحقق من وجود المعلمات الإلزامية
+  if (!id || !query) {
+    return res.status(400).json({ 
+      status: false, 
+      error: 'Both id and query parameters are required' 
+    });
   }
 
-  // Use the 'query' parameter as the content for the user message.
-  const messages = [{ role: 'user', content: query }];
+  // تهيئة السجل إذا كان جديداً
+  if (!conversations[id]) {
+    conversations[id] = [];
+  }
 
-  // Optional: extract additional parameters from the query string, with default fallbacks.
-  const stream = req.query.stream ? req.query.stream === 'true' : false;
+  // إضافة رسالة المستخدم إلى السجل
+  conversations[id].push({ 
+    role: 'user', 
+    content: query 
+  });
+
+  // إعداد المعلمات الاختيارية
+  const stream = req.query.stream === 'true';
   const model = req.query.model || 'Pro/deepseek-ai/DeepSeek-R1';
-  const temperature = req.query.temperature ? parseFloat(req.query.temperature) : 0.8;
-  const presence_penalty = req.query.presence_penalty ? parseFloat(req.query.presence_penalty) : 0.6;
-  const frequency_penalty = req.query.frequency_penalty ? parseFloat(req.query.frequency_penalty) : 0.4;
-  const top_p = req.query.top_p ? parseFloat(req.query.top_p) : 0.9;
+  const temperature = parseFloat(req.query.temperature) || 0.8;
+  const presence_penalty = parseFloat(req.query.presence_penalty) || 0.6;
+  const frequency_penalty = parseFloat(req.query.frequency_penalty) || 0.4;
+  const top_p = parseFloat(req.query.top_p) || 0.9;
 
-  // Construct the payload for the siliconflow API call
+  // إعداد payload للطلب
   const payload = JSON.stringify({
-    messages,
+    messages: conversations[id],
     stream,
     model,
     temperature,
@@ -54,16 +70,31 @@ async function onStart({ res, req }) {
 
   try {
     const response = await axios(config);
-    // Extract the actual AI response only from the returned data.
-    // This assumes the API returns a structure similar to OpenAI's Chat Completion API.
-    const aiResponse = response.data.choices?.[0]?.message?.content;
-    if (!aiResponse) {
-      return res.status(500).json({ status: false, error: 'AI response not found in API response.' });
+    const message = response.data.choices?.[0]?.message;
+    
+    // التحقق من وجود رد صالح
+    if (!message?.content) {
+      return res.status(500).json({ 
+        status: false, 
+        error: 'Invalid AI response format' 
+      });
     }
-    res.json({ response: aiResponse });
+
+    // إضافة رد المساعد إلى السجل
+    conversations[id].push(message);
+    
+    // إرجاع الرد للمستخدم
+    res.json({ 
+      status: true, 
+      response: message.content 
+    });
+
   } catch (error) {
-    console.error("Error during API call:", error);
-    res.status(500).json({ status: false, error: 'An error occurred while fetching completions.' });
+    console.error("Error:", error.response?.data || error.message);
+    res.status(500).json({ 
+      status: false, 
+      error: 'Failed to process request' 
+    });
   }
 }
 
